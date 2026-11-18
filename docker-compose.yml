@@ -1,0 +1,125 @@
+services:
+  user-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${USER_DB_NAME:-user_db}
+      POSTGRES_USER: ${USER_DB_USERNAME:-users}
+      POSTGRES_PASSWORD: ${USER_DB_PASSWORD:-users}
+    ports: [ "${USER_DB_PORT:-5433}:5432" ]
+    volumes: [ "user-data:/var/lib/postgresql/data" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${USER_DB_USERNAME:-users} -d ${USER_DB_NAME:-user_db}" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [ order-network ]
+
+  order-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${ORDER_DB_NAME:-order_db}
+      POSTGRES_USER: ${ORDER_DB_USERNAME:-orders}
+      POSTGRES_PASSWORD: ${ORDER_DB_PASSWORD:-orders}
+    ports: [ "${ORDER_DB_PORT:-5434}:5432" ]
+    volumes: [ "order-data:/var/lib/postgresql/data" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${ORDER_DB_USERNAME:-orders} -d ${ORDER_DB_NAME:-order_db}" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [ order-network ]
+
+  notification-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${NOTIFICATION_DB_NAME:-notification_db}
+      POSTGRES_USER: ${NOTIFICATION_DB_USERNAME:-notifications}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-notifications}
+    ports: [ "${NOTIFICATION_DB_PORT:-5435}:5432" ]
+    volumes: [ "notification-data:/var/lib/postgresql/data" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${NOTIFICATION_DB_USERNAME:-notifications} -d ${NOTIFICATION_DB_NAME:-notification_db}" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [ order-network ]
+
+  user-service:
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
+    environment:
+      SERVER_PORT: 8081
+      DB_URL: jdbc:postgresql://user-db:5432/${USER_DB_NAME:-user_db}
+      DB_USERNAME: ${USER_DB_USERNAME:-users}
+      DB_PASSWORD: ${USER_DB_PASSWORD:-users}
+    ports: [ "${USER_SERVICE_PORT:-8081}:8081" ]
+    depends_on:
+      user-db:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8081/actuator/health" ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    networks: [ order-network ]
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    environment:
+      SERVER_PORT: 8083
+      DB_URL: jdbc:postgresql://notification-db:5432/${NOTIFICATION_DB_NAME:-notification_db}
+      DB_USERNAME: ${NOTIFICATION_DB_USERNAME:-notifications}
+      DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-notifications}
+    ports: [ "${NOTIFICATION_SERVICE_PORT:-8083}:8083" ]
+    depends_on:
+      notification-db:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8083/actuator/health" ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    networks: [ order-network ]
+
+  order-service:
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
+    environment:
+      SERVER_PORT: 8082
+      DB_URL: jdbc:postgresql://order-db:5432/${ORDER_DB_NAME:-order_db}
+      DB_USERNAME: ${ORDER_DB_USERNAME:-orders}
+      DB_PASSWORD: ${ORDER_DB_PASSWORD:-orders}
+      USER_SERVICE_URL: http://user-service:8081
+      NOTIFICATION_SERVICE_URL: http://notification-service:8083
+      HTTP_CONNECT_TIMEOUT: ${HTTP_CONNECT_TIMEOUT:-1s}
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-2s}
+    ports: [ "${ORDER_SERVICE_PORT:-8082}:8082" ]
+    depends_on:
+      order-db:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8082/actuator/health" ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    networks: [ order-network ]
+
+volumes:
+  user-data:
+  order-data:
+  notification-data:
+
+networks:
+  order-network:
+    driver: bridge
